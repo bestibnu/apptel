@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Build output
+dist/
+build/
+web-build/
+
+# Expo / native
+.expo/
+mobile/ios/
+mobile/android/
+
+# Prisma local DB
+*.db
+*.db-journal
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Debug screenshots
+phone*.png

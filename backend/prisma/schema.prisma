@@ -1,0 +1,31 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id           String       @id @default(cuid())
+  phone        String       @unique
+  balanceCents Int          @default(0)
+  createdAt    DateTime     @default(now())
+  calls        CallRecord[]
+}
+
+model CallRecord {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  toNumber    String
+  callSid     String?  @unique
+  durationSec Int      @default(0)
+  costCents   Int      @default(0)
+  ratePerMin  Int      @default(0)
+  status      String   @default("initiated")
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+}
