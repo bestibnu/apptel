@@ -30,3 +30,6 @@ Thumbs.db
 
 # Debug screenshots
 phone*.png
+
+# Misc artifacts
+*.stackdump

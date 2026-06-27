@@ -19,6 +19,8 @@ export const env = {
   publicBaseUrl: process.env.PUBLIC_BASE_URL ?? "",
   jwtSecret: process.env.JWT_SECRET ?? "dev-insecure-secret",
   seedCreditCents: Number(process.env.SEED_CREDIT_CENTS ?? 500),
+  // Hard cap on a single call's billable length (abuse/fraud guard). Default 60 min.
+  maxCallSeconds: Number(process.env.MAX_CALL_SECONDS ?? 3600),
   twilio: {
     accountSid: required("TWILIO_ACCOUNT_SID"),
     apiKey: required("TWILIO_API_KEY"),

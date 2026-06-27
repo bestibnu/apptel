@@ -1,5 +1,10 @@
-export function formatMoney(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
+export function formatMoney(minor: number): string {
+  return `£${(minor / 100).toFixed(2)}`;
+}
+
+/** Formats a per-minute rate (in minor units, e.g. pence) as "£0.02/min". */
+export function formatRate(ratePerMinMinor: number): string {
+  return `£${(ratePerMinMinor / 100).toFixed(2)}/min`;
 }
 
 export function formatDuration(totalSec: number): string {

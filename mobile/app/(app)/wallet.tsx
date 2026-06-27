@@ -3,7 +3,7 @@ import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "
 import { useFocusEffect } from "expo-router";
 import { api, type RateRow } from "../../src/api/client";
 import { useAuth } from "../../src/auth/AuthContext";
-import { formatMoney } from "../../src/util/format";
+import { formatMoney, formatRate } from "../../src/util/format";
 import { colors, radius, spacing } from "../../src/theme";
 
 const TOPUP_OPTIONS = [500, 1000, 2000];
@@ -75,7 +75,7 @@ export default function WalletScreen() {
           <View style={styles.rateRow}>
             <Text style={styles.rateCountry}>{item.country}</Text>
             <Text style={styles.ratePrefix}>{item.prefix}</Text>
-            <Text style={styles.rateValue}>{(item.ratePerMinCents / 100).toFixed(2)}/min</Text>
+            <Text style={styles.rateValue}>{formatRate(item.ratePerMinCents)}</Text>
           </View>
         )}
       />

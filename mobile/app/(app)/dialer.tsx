@@ -1,9 +1,9 @@
 import { useCallback, useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { api, type RateRow } from "../../src/api/client";
 import { useAuth } from "../../src/auth/AuthContext";
-import { formatMoney, toE164 } from "../../src/util/format";
+import { formatMoney, formatRate, toE164 } from "../../src/util/format";
 import { colors, radius, spacing } from "../../src/theme";
 
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "+", "0", "<"];
@@ -25,6 +25,7 @@ export default function DialerScreen() {
   const { token, user, updateUser } = useAuth();
   const [number, setNumber] = useState("+");
   const [rates, setRates] = useState<RateRow[]>([]);
+  const [preparing, setPreparing] = useState(false);
 
   const refresh = useCallback(() => {
     if (!token) return;
@@ -60,6 +61,28 @@ export default function DialerScreen() {
     router.push({ pathname: "/call", params: { to: e164 } });
   };
 
+  // No-internet (access-number) flow: register the destination, then prompt the
+  // user to dial the local access number from their regular phone.
+  const onAccessCall = async () => {
+    if (!callable || !token || preparing) return;
+    try {
+      setPreparing(true);
+      const res = await api.prepareAccessCall(token, e164);
+      Alert.alert(
+        "Call without internet",
+        `Dial ${res.accessNumber} from your phone now to connect to ${e164}.\n\nThis uses your normal call plan (charged as a local call) — no data or Wi-Fi needed. The setup expires in 5 minutes.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Open dialer", onPress: () => Linking.openURL(`tel:${res.accessNumber}`) },
+        ]
+      );
+    } catch (err) {
+      Alert.alert("Couldn't set up call", err instanceof Error ? err.message : "Please try again.");
+    } finally {
+      setPreparing(false);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.balanceRow}>
@@ -73,9 +96,9 @@ export default function DialerScreen() {
         </Text>
         <Text style={styles.rate}>
           {matched
-            ? `${matched.country} - ${(matched.ratePerMinCents / 100).toFixed(2)}/min`
+            ? `${matched.country} - ${formatRate(matched.ratePerMinCents)}`
             : e164.length > 2
-            ? "Other - $0.15/min"
+            ? `Other - ${formatRate(15)}`
             : "Enter a number with country code"}
         </Text>
       </View>
@@ -88,13 +111,25 @@ export default function DialerScreen() {
         ))}
       </View>
 
-      <Pressable
-        style={[styles.callButton, !callable && styles.callDisabled]}
-        onPress={onCall}
-        disabled={!callable}
-      >
-        <Text style={styles.callText}>Call</Text>
-      </Pressable>
+      <View style={styles.actions}>
+        <Pressable
+          style={[styles.callButton, !callable && styles.callDisabled]}
+          onPress={onCall}
+          disabled={!callable}
+        >
+          <Text style={styles.callText}>Call</Text>
+        </Pressable>
+
+        <Pressable
+          style={[styles.accessButton, (!callable || preparing) && styles.callDisabled]}
+          onPress={onAccessCall}
+          disabled={!callable || preparing}
+        >
+          <Text style={styles.accessText}>
+            {preparing ? "Setting up…" : "Call without internet"}
+          </Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -130,13 +165,21 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   keyText: { color: colors.text, fontSize: 26, fontWeight: "600" },
+  actions: { marginTop: "auto", gap: spacing.sm },
   callButton: {
     backgroundColor: colors.success,
     borderRadius: radius.pill,
     paddingVertical: spacing.md,
     alignItems: "center",
-    marginTop: "auto",
   },
   callDisabled: { opacity: 0.4 },
   callText: { color: "#04210f", fontSize: 18, fontWeight: "800" },
+  accessButton: {
+    borderRadius: radius.pill,
+    paddingVertical: spacing.sm,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  accessText: { color: colors.text, fontSize: 15, fontWeight: "600" },
 });

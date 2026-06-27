@@ -75,4 +75,13 @@ export const api = {
       body: { amountCents },
       token,
     }),
+
+  prepareAccessCall: (token: string, to: string) =>
+    request<{
+      accessNumber: string;
+      to: string;
+      country: string;
+      ratePerMinCents: number;
+      expiresInSeconds: number;
+    }>("/voice/access/prepare", { method: "POST", body: { to }, token }),
 };

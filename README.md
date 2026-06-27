@@ -82,13 +82,29 @@ Then:
 | ------ | -------------------- | ---- | ---------------------------------------- |
 | POST   | `/auth/start-verify` | —    | Send SMS OTP (`{ phone }`)               |
 | POST   | `/auth/check-verify` | —    | Verify OTP, return JWT (`{ phone, code }`) |
-| GET    | `/voice/token`       | JWT  | Mint a Twilio Voice access token         |
-| POST   | `/voice/twiml`       | —*   | Twilio webhook: credit check + `<Dial>`  |
-| POST   | `/voice/status`      | —*   | Twilio webhook: deduct credit on hang-up |
-| GET    | `/wallet`            | JWT  | Balance + rate table                     |
-| POST   | `/wallet/topup`      | JWT  | Mock add credit (`{ amountCents }`)      |
+| GET    | `/voice/token`         | JWT  | Mint a Twilio Voice access token         |
+| POST   | `/voice/twiml`         | —*   | Twilio webhook: credit check + `<Dial>`  |
+| POST   | `/voice/status`        | —*   | Twilio webhook: deduct credit on hang-up |
+| POST   | `/voice/access/prepare`| JWT  | No-internet flow: register destination (`{ to }`) |
+| POST   | `/voice/incoming`      | —*   | Twilio webhook: bridge access-number call |
+| GET    | `/wallet`              | JWT  | Balance + rate table                     |
+| POST   | `/wallet/topup`        | JWT  | Mock add credit (`{ amountCents }`)      |
 
 `*` Called by Twilio, not the app.
+
+#### No-internet calling (access-number / two-stage dialing)
+
+For networks that block VoIP, the app supports a Rebtel-style flow that uses the
+regular phone network instead of data:
+
+1. App calls `POST /voice/access/prepare` with the destination → backend stores a
+   short-lived intent keyed by the caller's phone, and returns the access number.
+2. User dials the access number from their normal phone (a plain cellular call).
+3. Twilio hits `POST /voice/incoming`; the backend matches the caller's number to
+   the pending intent and bridges the call to the destination.
+
+To enable it, set the **"A Call Comes In"** Voice webhook of your Twilio number
+(the one used as `TWILIO_CALLER_ID`) to `<PUBLIC_BASE_URL>/voice/incoming` (POST).
 
 ---
 
@@ -144,8 +160,9 @@ first build you can iterate with `npm start`.
 | `TWILIO_API_SECRET`         | Twilio API Key secret                                 |
 | `TWILIO_TWIML_APP_SID`      | TwiML App SID (`AP…`)                                 |
 | `TWILIO_VERIFY_SERVICE_SID` | Verify Service SID (`VA…`)                            |
-| `TWILIO_CALLER_ID`          | Your Twilio phone number, E.164                       |
-| `SEED_CREDIT_CENTS`         | Credit granted to new users (default 500 = $5.00)     |
+| `TWILIO_CALLER_ID`          | Your Twilio phone number, E.164 (also the access number) |
+| `SEED_CREDIT_CENTS`         | Credit granted to new users (default 500 = £5.00)     |
+| `MAX_CALL_SECONDS`          | Per-call hard cap, abuse guard (default 3600 = 60 min) |
 
 ---
 
