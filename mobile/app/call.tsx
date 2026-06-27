@@ -1,9 +1,10 @@
 import { useEffect, useRef } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../src/auth/AuthContext";
 import { useVoice, type CallStatus } from "../src/twilio/useVoice";
+import { startAccessCall } from "../src/util/accessCall";
 import { formatDuration } from "../src/util/format";
 import { colors, radius, spacing } from "../src/theme";
 
@@ -19,11 +20,12 @@ const STATUS_LABEL: Record<CallStatus, string> = {
 
 export default function CallScreen() {
   const router = useRouter();
-  const { to } = useLocalSearchParams<{ to: string }>();
+  const { to, fallback } = useLocalSearchParams<{ to: string; fallback?: string }>();
   const { token } = useAuth();
   const { status, durationSec, muted, speaker, error, startCall, hangUp, toggleMute, toggleSpeaker } =
     useVoice(token);
   const started = useRef(false);
+  const fallbackPrompted = useRef(false);
 
   useEffect(() => {
     if (started.current || !to) return;
@@ -32,11 +34,32 @@ export default function CallScreen() {
   }, [to, startCall]);
 
   useEffect(() => {
+    // VoIP couldn't connect: if this call was eligible for fallback, offer the
+    // no-internet route (phone network) instead of just bailing out.
+    if (status === "error" && fallback === "1" && !fallbackPrompted.current) {
+      fallbackPrompted.current = true;
+      Alert.alert(
+        "Internet call failed",
+        "Your connection looks weak. Call without internet instead? It uses your normal phone plan.",
+        [
+          { text: "Cancel", style: "cancel", onPress: () => router.back() },
+          {
+            text: "Call without internet",
+            onPress: async () => {
+              await startAccessCall(token, to ?? "");
+              router.back();
+            },
+          },
+        ]
+      );
+      return;
+    }
+
     if (status === "disconnected" || status === "error") {
       const t = setTimeout(() => router.back(), 1500);
       return () => clearTimeout(t);
     }
-  }, [status, router]);
+  }, [status, fallback, router, token, to]);
 
   const isActive = status === "connected" || status === "reconnecting";
 

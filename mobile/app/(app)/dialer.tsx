@@ -1,12 +1,27 @@
 import { useCallback, useMemo, useState } from "react";
-import { Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { api, type RateRow } from "../../src/api/client";
 import { useAuth } from "../../src/auth/AuthContext";
+import { useCallMode, type CallMode } from "../../src/prefs/callMode";
+import { probeInternet } from "../../src/net/probe";
+import { startAccessCall } from "../../src/util/accessCall";
 import { formatMoney, formatRate, toE164 } from "../../src/util/format";
 import { colors, radius, spacing } from "../../src/theme";
 
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "+", "0", "<"];
+
+const MODE_OPTIONS: { value: CallMode; label: string }[] = [
+  { value: "auto", label: "Auto" },
+  { value: "internet", label: "Internet" },
+  { value: "no-internet", label: "No internet" },
+];
+
+const MODE_CAPTION: Record<CallMode, string> = {
+  auto: "Uses the internet when available, otherwise your phone network.",
+  internet: "Calls over the internet (uses mobile data).",
+  "no-internet": "Calls via your phone network — no data needed.",
+};
 
 function rateFor(e164: string, rates: RateRow[]): RateRow | null {
   const digits = e164.replace(/[^\d]/g, "");
@@ -23,9 +38,10 @@ function rateFor(e164: string, rates: RateRow[]): RateRow | null {
 export default function DialerScreen() {
   const router = useRouter();
   const { token, user, updateUser } = useAuth();
+  const { mode, setMode } = useCallMode();
   const [number, setNumber] = useState("+");
   const [rates, setRates] = useState<RateRow[]>([]);
-  const [preparing, setPreparing] = useState(false);
+  const [deciding, setDeciding] = useState(false);
 
   const refresh = useCallback(() => {
     if (!token) return;
@@ -56,32 +72,39 @@ export default function DialerScreen() {
   const matched = useMemo(() => rateFor(e164, rates), [e164, rates]);
   const callable = e164.replace(/[^\d]/g, "").length >= 7;
 
-  const onCall = () => {
-    if (!callable) return;
-    router.push({ pathname: "/call", params: { to: e164 } });
-  };
+  const placeVoip = useCallback(() => {
+    router.push({ pathname: "/call", params: { to: e164, fallback: "1" } });
+  }, [router, e164]);
 
-  // No-internet (access-number) flow: register the destination, then prompt the
-  // user to dial the local access number from their regular phone.
-  const onAccessCall = async () => {
-    if (!callable || !token || preparing) return;
-    try {
-      setPreparing(true);
-      const res = await api.prepareAccessCall(token, e164);
-      Alert.alert(
-        "Call without internet",
-        `Dial ${res.accessNumber} from your phone now to connect to ${e164}.\n\nThis uses your normal call plan (charged as a local call) — no data or Wi-Fi needed. The setup expires in 5 minutes.`,
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Open dialer", onPress: () => Linking.openURL(`tel:${res.accessNumber}`) },
-        ]
-      );
-    } catch (err) {
-      Alert.alert("Couldn't set up call", err instanceof Error ? err.message : "Please try again.");
-    } finally {
-      setPreparing(false);
+  // Single entry point. The route is chosen from the user's preference and, in
+  // Auto mode, a quick reachability probe: good internet -> VoIP, otherwise the
+  // local access-number flow over the phone network.
+  const onCall = useCallback(async () => {
+    if (!callable || deciding) return;
+
+    if (mode === "no-internet") {
+      await startAccessCall(token, e164);
+      return;
     }
-  };
+    if (mode === "internet") {
+      placeVoip();
+      return;
+    }
+
+    setDeciding(true);
+    try {
+      const { reachable } = await probeInternet();
+      if (reachable) {
+        placeVoip();
+      } else {
+        await startAccessCall(token, e164);
+      }
+    } finally {
+      setDeciding(false);
+    }
+  }, [callable, deciding, mode, token, e164, placeVoip]);
+
+  const callLabel = deciding ? "Checking connection…" : "Call";
 
   return (
     <View style={styles.container}>
@@ -112,22 +135,30 @@ export default function DialerScreen() {
       </View>
 
       <View style={styles.actions}>
-        <Pressable
-          style={[styles.callButton, !callable && styles.callDisabled]}
-          onPress={onCall}
-          disabled={!callable}
-        >
-          <Text style={styles.callText}>Call</Text>
-        </Pressable>
+        <View style={styles.segment}>
+          {MODE_OPTIONS.map((opt) => {
+            const active = mode === opt.value;
+            return (
+              <Pressable
+                key={opt.value}
+                style={[styles.segmentItem, active && styles.segmentItemActive]}
+                onPress={() => setMode(opt.value)}
+              >
+                <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
+                  {opt.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <Text style={styles.caption}>{MODE_CAPTION[mode]}</Text>
 
         <Pressable
-          style={[styles.accessButton, (!callable || preparing) && styles.callDisabled]}
-          onPress={onAccessCall}
-          disabled={!callable || preparing}
+          style={[styles.callButton, (!callable || deciding) && styles.callDisabled]}
+          onPress={onCall}
+          disabled={!callable || deciding}
         >
-          <Text style={styles.accessText}>
-            {preparing ? "Setting up…" : "Call without internet"}
-          </Text>
+          <Text style={styles.callText}>{callLabel}</Text>
         </Pressable>
       </View>
     </View>
@@ -147,25 +178,42 @@ const styles = StyleSheet.create({
   },
   balanceLabel: { color: colors.textMuted, fontSize: 14 },
   balanceValue: { color: colors.success, fontSize: 18, fontWeight: "700" },
-  display: { alignItems: "center", paddingVertical: spacing.md },
+  display: { alignItems: "center", paddingVertical: spacing.sm },
   number: { color: colors.text, fontSize: 34, fontWeight: "700" },
   rate: { color: colors.textMuted, fontSize: 14, marginTop: spacing.xs },
   keypad: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
-    rowGap: spacing.md,
+    rowGap: spacing.sm,
   },
   key: {
     width: "30%",
-    aspectRatio: 1.6,
+    aspectRatio: 2.1,
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     alignItems: "center",
     justifyContent: "center",
   },
   keyText: { color: colors.text, fontSize: 26, fontWeight: "600" },
-  actions: { marginTop: "auto", gap: spacing.sm },
+  actions: { marginTop: spacing.md, gap: spacing.sm },
+  segment: {
+    flexDirection: "row",
+    backgroundColor: colors.surface,
+    borderRadius: radius.pill,
+    padding: 4,
+    gap: 4,
+  },
+  segmentItem: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+    alignItems: "center",
+  },
+  segmentItemActive: { backgroundColor: colors.primary },
+  segmentText: { color: colors.textMuted, fontSize: 14, fontWeight: "600" },
+  segmentTextActive: { color: colors.primaryText, fontWeight: "700" },
+  caption: { color: colors.textMuted, fontSize: 12, textAlign: "center" },
   callButton: {
     backgroundColor: colors.success,
     borderRadius: radius.pill,
@@ -174,12 +222,4 @@ const styles = StyleSheet.create({
   },
   callDisabled: { opacity: 0.4 },
   callText: { color: "#04210f", fontSize: 18, fontWeight: "800" },
-  accessButton: {
-    borderRadius: radius.pill,
-    paddingVertical: spacing.sm,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  accessText: { color: colors.text, fontSize: 15, fontWeight: "600" },
 });
