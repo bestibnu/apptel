@@ -3,25 +3,12 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { api, type RateRow } from "../../src/api/client";
 import { useAuth } from "../../src/auth/AuthContext";
-import { useCallMode, type CallMode } from "../../src/prefs/callMode";
 import { probeInternet } from "../../src/net/probe";
 import { startAccessCall } from "../../src/util/accessCall";
 import { formatMoney, formatRate, toE164 } from "../../src/util/format";
 import { colors, radius, spacing } from "../../src/theme";
 
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "+", "0", "<"];
-
-const MODE_OPTIONS: { value: CallMode; label: string }[] = [
-  { value: "auto", label: "Auto" },
-  { value: "internet", label: "Internet" },
-  { value: "no-internet", label: "No internet" },
-];
-
-const MODE_CAPTION: Record<CallMode, string> = {
-  auto: "Uses the internet when available, otherwise your phone network.",
-  internet: "Calls over the internet (uses mobile data).",
-  "no-internet": "Calls via your phone network — no data needed.",
-};
 
 function rateFor(e164: string, rates: RateRow[]): RateRow | null {
   const digits = e164.replace(/[^\d]/g, "");
@@ -38,10 +25,9 @@ function rateFor(e164: string, rates: RateRow[]): RateRow | null {
 export default function DialerScreen() {
   const router = useRouter();
   const { token, user, updateUser } = useAuth();
-  const { mode, setMode } = useCallMode();
   const [number, setNumber] = useState("+");
   const [rates, setRates] = useState<RateRow[]>([]);
-  const [deciding, setDeciding] = useState(false);
+  const [connecting, setConnecting] = useState(false);
 
   const refresh = useCallback(() => {
     if (!token) return;
@@ -72,39 +58,23 @@ export default function DialerScreen() {
   const matched = useMemo(() => rateFor(e164, rates), [e164, rates]);
   const callable = e164.replace(/[^\d]/g, "").length >= 7;
 
-  const placeVoip = useCallback(() => {
-    router.push({ pathname: "/call", params: { to: e164, fallback: "1" } });
-  }, [router, e164]);
-
-  // Single entry point. The route is chosen from the user's preference and, in
-  // Auto mode, a quick reachability probe: good internet -> VoIP, otherwise the
-  // local access-number flow over the phone network.
+  // One button, channel chosen transparently: a quick reachability probe routes
+  // a good connection to VoIP, otherwise we use the local access-number flow
+  // over the phone network. The user never picks a channel — they just call.
   const onCall = useCallback(async () => {
-    if (!callable || deciding) return;
-
-    if (mode === "no-internet") {
-      await startAccessCall(token, e164);
-      return;
-    }
-    if (mode === "internet") {
-      placeVoip();
-      return;
-    }
-
-    setDeciding(true);
+    if (!callable || connecting) return;
+    setConnecting(true);
     try {
       const { reachable } = await probeInternet();
       if (reachable) {
-        placeVoip();
+        router.push({ pathname: "/call", params: { to: e164, fallback: "1" } });
       } else {
         await startAccessCall(token, e164);
       }
     } finally {
-      setDeciding(false);
+      setConnecting(false);
     }
-  }, [callable, deciding, mode, token, e164, placeVoip]);
-
-  const callLabel = deciding ? "Checking connection…" : "Call";
+  }, [callable, connecting, router, token, e164]);
 
   return (
     <View style={styles.container}>
@@ -135,30 +105,12 @@ export default function DialerScreen() {
       </View>
 
       <View style={styles.actions}>
-        <View style={styles.segment}>
-          {MODE_OPTIONS.map((opt) => {
-            const active = mode === opt.value;
-            return (
-              <Pressable
-                key={opt.value}
-                style={[styles.segmentItem, active && styles.segmentItemActive]}
-                onPress={() => setMode(opt.value)}
-              >
-                <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
-                  {opt.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-        <Text style={styles.caption}>{MODE_CAPTION[mode]}</Text>
-
         <Pressable
-          style={[styles.callButton, (!callable || deciding) && styles.callDisabled]}
+          style={[styles.callButton, (!callable || connecting) && styles.callDisabled]}
           onPress={onCall}
-          disabled={!callable || deciding}
+          disabled={!callable || connecting}
         >
-          <Text style={styles.callText}>{callLabel}</Text>
+          <Text style={styles.callText}>{connecting ? "Connecting…" : "Call"}</Text>
         </Pressable>
       </View>
     </View>
@@ -178,42 +130,25 @@ const styles = StyleSheet.create({
   },
   balanceLabel: { color: colors.textMuted, fontSize: 14 },
   balanceValue: { color: colors.success, fontSize: 18, fontWeight: "700" },
-  display: { alignItems: "center", paddingVertical: spacing.sm },
+  display: { alignItems: "center", paddingVertical: spacing.md },
   number: { color: colors.text, fontSize: 34, fontWeight: "700" },
   rate: { color: colors.textMuted, fontSize: 14, marginTop: spacing.xs },
   keypad: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
-    rowGap: spacing.sm,
+    rowGap: spacing.md,
   },
   key: {
     width: "30%",
-    aspectRatio: 2.1,
+    aspectRatio: 1.7,
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     alignItems: "center",
     justifyContent: "center",
   },
   keyText: { color: colors.text, fontSize: 26, fontWeight: "600" },
-  actions: { marginTop: spacing.md, gap: spacing.sm },
-  segment: {
-    flexDirection: "row",
-    backgroundColor: colors.surface,
-    borderRadius: radius.pill,
-    padding: 4,
-    gap: 4,
-  },
-  segmentItem: {
-    flex: 1,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.pill,
-    alignItems: "center",
-  },
-  segmentItemActive: { backgroundColor: colors.primary },
-  segmentText: { color: colors.textMuted, fontSize: 14, fontWeight: "600" },
-  segmentTextActive: { color: colors.primaryText, fontWeight: "700" },
-  caption: { color: colors.textMuted, fontSize: 12, textAlign: "center" },
+  actions: { marginTop: "auto", gap: spacing.sm },
   callButton: {
     backgroundColor: colors.success,
     borderRadius: radius.pill,
