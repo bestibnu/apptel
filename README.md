@@ -174,7 +174,7 @@ first build you can iterate with `npm start`.
 | `TWILIO_TWIML_APP_SID`      | TwiML App SID (`AP…`)                                 |
 | `TWILIO_VERIFY_SERVICE_SID` | Verify Service SID (`VA…`)                            |
 | `TWILIO_CALLER_ID`          | Your Twilio phone number, E.164 (also the access number) |
-| `SEED_CREDIT_CENTS`         | Credit granted to new users (default 500 = £5.00)     |
+| `SEED_CREDIT_CENTS`         | Credit granted to new users (default 500 = $5.00)     |
 | `MAX_CALL_SECONDS`          | Per-call hard cap, abuse guard (default 3600 = 60 min) |
 
 ---
