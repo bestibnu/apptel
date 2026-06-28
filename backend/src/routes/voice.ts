@@ -15,6 +15,24 @@ const E164 = /^\+[1-9]\d{6,14}$/;
 type TwimlResponse = InstanceType<typeof VoiceResponse>;
 type AppUser = { id: string; balanceCents: number };
 
+/** Build an absolute callback URL for TwiML actions (Twilio needs to reach it). */
+function actionUrl(path: string): string {
+  return env.publicBaseUrl ? `${env.publicBaseUrl}${path}` : path;
+}
+
+/**
+ * Convert keypad-entered digits into an E.164 number. Callers enter the country
+ * code followed by the number (optionally prefixed with the "00" international
+ * access code), which we normalise to a leading "+".
+ */
+function dtmfToE164(digits: string | undefined): string | null {
+  if (!digits) return null;
+  let d = digits.replace(/[^\d]/g, "");
+  if (d.startsWith("00")) d = d.slice(2);
+  if (!d) return null;
+  return "+" + d;
+}
+
 /**
  * Appends either a <Dial> to the destination (if the user has credit) or a
  * spoken error to the TwiML response, and records the call for cost
@@ -126,25 +144,67 @@ voiceRouter.post("/access/prepare", requireAuth, async (req, res) => {
 
 /**
  * Access-number (no-internet) flow, step 2: Twilio webhook for inbound calls to
- * the access number. We match the caller's number (From) to a pending intent
- * and bridge the call to the intended destination.
+ * the shared access number. The caller is identified by their number (From).
+ *
+ * Two paths:
+ *  - Fast path: the app pre-registered a destination (the phone had data at
+ *    setup time) — bridge straight through.
+ *  - Zero-data path: no pending intent, so collect the destination over the
+ *    phone via DTMF keypad entry. This needs no app or data at all — the user
+ *    simply dials the access number and keys in the number (classic two-stage
+ *    dialing, like Rebtel).
  */
 voiceRouter.post("/incoming", async (req, res) => {
   const response = new VoiceResponse();
   const from: string | undefined = req.body?.From;
 
-  const to = from ? consumeIntent(from) : null;
-  if (!to) {
-    response.say(
-      "We could not find a pending call. Please set up your call in the app first, then dial this number."
-    );
+  const user = from ? await prisma.user.findUnique({ where: { phone: from } }) : null;
+  if (!user) {
+    response.say("Your number is not recognised. Please sign up in the app first. Goodbye.");
     res.type("text/xml").send(response.toString());
     return;
   }
 
+  const prepared = from ? consumeIntent(from) : null;
+  if (prepared) {
+    await appendDial(response, user, prepared);
+    res.type("text/xml").send(response.toString());
+    return;
+  }
+
+  const gather = response.gather({
+    input: ["dtmf"],
+    finishOnKey: "#",
+    timeout: 10,
+    action: actionUrl("/voice/incoming/connect"),
+    method: "POST",
+  });
+  gather.say(
+    "Welcome to Apptel. Using your keypad, enter the number you wish to call, starting with the country code, then press the hash key."
+  );
+  // Reached only if the caller entered nothing before the timeout.
+  response.say("We did not receive any digits. Goodbye.");
+  res.type("text/xml").send(response.toString());
+});
+
+/**
+ * Zero-data flow, step 3: receives the DTMF digits gathered by /incoming and
+ * bridges the call to the entered destination after a credit check.
+ */
+voiceRouter.post("/incoming/connect", async (req, res) => {
+  const response = new VoiceResponse();
+  const from: string | undefined = req.body?.From;
+  const to = dtmfToE164(req.body?.Digits);
+
   const user = from ? await prisma.user.findUnique({ where: { phone: from } }) : null;
   if (!user) {
     response.say("Your account could not be found. Goodbye.");
+    res.type("text/xml").send(response.toString());
+    return;
+  }
+
+  if (!to || !E164.test(to)) {
+    response.say("That number was not valid. Please hang up and try again.");
     res.type("text/xml").send(response.toString());
     return;
   }

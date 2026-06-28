@@ -86,7 +86,8 @@ Then:
 | POST   | `/voice/twiml`         | —*   | Twilio webhook: credit check + `<Dial>`  |
 | POST   | `/voice/status`        | —*   | Twilio webhook: deduct credit on hang-up |
 | POST   | `/voice/access/prepare`| JWT  | No-internet flow: register destination (`{ to }`) |
-| POST   | `/voice/incoming`      | —*   | Twilio webhook: bridge access-number call |
+| POST   | `/voice/incoming`      | —*   | Twilio webhook: bridge prepared call, or prompt for digits (DTMF) |
+| POST   | `/voice/incoming/connect`| —* | Twilio webhook: bridge call to DTMF-entered number |
 | GET    | `/wallet`              | JWT  | Balance + rate table                     |
 | POST   | `/wallet/topup`        | JWT  | Mock add credit (`{ amountCents }`)      |
 
@@ -95,7 +96,9 @@ Then:
 #### No-internet calling (access-number / two-stage dialing)
 
 For networks that block VoIP, the app supports a Rebtel-style flow that uses the
-regular phone network instead of data:
+regular phone network instead of data. There are two variants:
+
+**A. App-prepared (works with intermittent data):**
 
 1. App calls `POST /voice/access/prepare` with the destination → backend stores a
    short-lived intent keyed by the caller's phone, and returns the access number.
@@ -103,8 +106,18 @@ regular phone network instead of data:
 3. Twilio hits `POST /voice/incoming`; the backend matches the caller's number to
    the pending intent and bridges the call to the destination.
 
-To enable it, set the **"A Call Comes In"** Voice webhook of your Twilio number
+**B. Zero-data (DTMF two-stage dialing — no app or data needed at all):**
+
+1. User dials the access number directly from their phone's native dialer.
+2. Twilio hits `POST /voice/incoming`. With no pending intent, the backend
+   identifies the caller by their number and returns a `<Gather>` that prompts
+   them to key in the destination (country code first, then `#`).
+3. The entered digits are posted to `POST /voice/incoming/connect`, which
+   validates the number, checks credit, and bridges the call.
+
+To enable both, set the **"A Call Comes In"** Voice webhook of your Twilio number
 (the one used as `TWILIO_CALLER_ID`) to `<PUBLIC_BASE_URL>/voice/incoming` (POST).
+The `/voice/incoming/connect` callback is invoked automatically by the `<Gather>`.
 
 ---
 
