@@ -62,6 +62,9 @@ export default function CallScreen() {
   }, [status, fallback, router, token, to]);
 
   const isActive = status === "connected" || status === "reconnecting";
+  // Speaker can be chosen while dialing/ringing (applied once audio connects);
+  // mute only makes sense with a live audio stream.
+  const speakerUsable = isActive || status === "connecting" || status === "ringing";
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -83,7 +86,7 @@ export default function CallScreen() {
         <Pressable
           style={[styles.controlBtn, speaker && styles.controlActive]}
           onPress={toggleSpeaker}
-          disabled={!isActive}
+          disabled={!speakerUsable}
         >
           <Text style={styles.controlText}>{speaker ? "Speaker On" : "Speaker"}</Text>
         </Pressable>

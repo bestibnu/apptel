@@ -32,6 +32,8 @@ export function useVoice(sessionToken: string | null): UseVoiceResult {
   const voiceRef = useRef<Voice | null>(null);
   const callRef = useRef<Call | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Speaker choice made before the call connects; applied once audio exists.
+  const speakerWantedRef = useRef(false);
 
   const [status, setStatus] = useState<CallStatus>("idle");
   const [durationSec, setDurationSec] = useState(0);
@@ -55,6 +57,24 @@ export function useVoice(sessionToken: string | null): UseVoiceResult {
     timerRef.current = setInterval(() => setDurationSec((s) => s + 1), 1000);
   }, [stopTimer]);
 
+  /** Route audio to speaker/earpiece. Safe to call only once audio is up. */
+  const applySpeaker = useCallback(async (on: boolean): Promise<boolean> => {
+    const voice = voiceRef.current;
+    if (!voice) return false;
+    try {
+      const devices = await voice.getAudioDevices();
+      const list = devices.audioDevices ?? [];
+      const wanted = list.find((d) =>
+        on ? d.type === AudioDevice.Type.Speaker : d.type === AudioDevice.Type.Earpiece
+      );
+      if (!wanted) return false;
+      await wanted.select();
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
   const attachCallListeners = useCallback(
     (call: Call) => {
       call.on(Call.Event.Ringing, () => setStatus("ringing"));
@@ -62,6 +82,11 @@ export function useVoice(sessionToken: string | null): UseVoiceResult {
         setStatus("connected");
         setDurationSec(0);
         startTimer();
+        // Honour a speaker choice made while dialing/ringing, now that the
+        // audio session actually exists.
+        if (speakerWantedRef.current) {
+          applySpeaker(true).catch(() => {});
+        }
       });
       call.on(Call.Event.Reconnecting, () => setStatus("reconnecting"));
       call.on(Call.Event.Reconnected, () => setStatus("connected"));
@@ -77,7 +102,7 @@ export function useVoice(sessionToken: string | null): UseVoiceResult {
         callRef.current = null;
       });
     },
-    [startTimer, stopTimer]
+    [startTimer, stopTimer, applySpeaker]
   );
 
   const startCall = useCallback(
@@ -92,6 +117,7 @@ export function useVoice(sessionToken: string | null): UseVoiceResult {
         setStatus("connecting");
         setMuted(false);
         setSpeaker(false);
+        speakerWantedRef.current = false;
 
         const { token } = await api.getVoiceToken(sessionToken);
         const call = await voiceRef.current!.connect(token, {
@@ -132,23 +158,16 @@ export function useVoice(sessionToken: string | null): UseVoiceResult {
   }, [muted]);
 
   const toggleSpeaker = useCallback(async () => {
-    const voice = voiceRef.current;
-    if (!voice) return;
-    try {
-      const next = !speaker;
-      const devices = await voice.getAudioDevices();
-      const list = devices.audioDevices ?? [];
-      const wanted = list.find((d) =>
-        next ? d.type === AudioDevice.Type.Speaker : d.type === AudioDevice.Type.Earpiece
-      );
-      if (wanted) {
-        await wanted.select();
-        setSpeaker(next);
-      }
-    } catch {
-      // Audio routing is best-effort across platforms.
+    const next = !speaker;
+    // Before the call connects there may be no audio session to route yet, so
+    // remember the choice and reflect it in the UI; it's applied on connect.
+    speakerWantedRef.current = next;
+    setSpeaker(next);
+    if (callRef.current) {
+      const ok = await applySpeaker(next);
+      if (!ok && status === "connected") setSpeaker(!next);
     }
-  }, [speaker]);
+  }, [speaker, status, applySpeaker]);
 
   useEffect(() => {
     return () => {
